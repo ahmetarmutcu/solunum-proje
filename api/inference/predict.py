@@ -2,6 +2,7 @@ import numpy as np
 import librosa
 import pickle
 import os
+import json
 
 # -----------------------------
 # MODEL YOLLARI
@@ -18,11 +19,49 @@ ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
 model = None
 label_encoder = None
 
+
+def _load_h5_with_inputlayer_patch(model_path: str):
+    """Fallback loader for H5 models that store InputLayer with `batch_shape`."""
+    from tensorflow import keras
+    import h5py
+
+    with h5py.File(model_path, "r") as h5:
+        model_config = h5.attrs.get("model_config")
+        if model_config is None:
+            raise ValueError("H5 model_config missing")
+
+        if isinstance(model_config, bytes):
+            model_config = model_config.decode("utf-8")
+
+        config_obj = json.loads(model_config)
+
+        def patch_input_layer(node):
+            if isinstance(node, dict):
+                if node.get("class_name") == "InputLayer":
+                    cfg = node.get("config", {})
+                    if "batch_shape" in cfg and "batch_input_shape" not in cfg:
+                        cfg["batch_input_shape"] = cfg.pop("batch_shape")
+                for value in node.values():
+                    patch_input_layer(value)
+            elif isinstance(node, list):
+                for item in node:
+                    patch_input_layer(item)
+
+        patch_input_layer(config_obj)
+
+        loaded_model = keras.models.model_from_json(json.dumps(config_obj))
+        loaded_model.load_weights(model_path)
+        return loaded_model
+
 def _load_model():
     global model, label_encoder
     if model is None:
         from tensorflow import keras
-        model = keras.models.load_model(MODEL_PATH)
+        try:
+            model = keras.models.load_model(MODEL_PATH, compile=False)
+        except Exception:
+            # Compatibility path for models saved with different Keras config keys.
+            model = _load_h5_with_inputlayer_patch(MODEL_PATH)
         with open(ENCODER_PATH, "rb") as f:
             label_encoder = pickle.load(f)
 
