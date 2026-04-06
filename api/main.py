@@ -4,6 +4,7 @@ import shutil
 import os
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from api.database import SessionLocal, engine
 from api.models import Base, User, Prediction
@@ -64,32 +65,49 @@ def login(user: UserRequest, db: Session = Depends(get_db)):
 # ---------------- PREDICT ----------------
 @app.post("/predict")
 async def predict(
-    user_id: int = Form(...),   # 🔥 FORM OLMAK ZORUNDA
+    user_id: int | None = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    file_name = file.filename or f"upload_{int(datetime.now().timestamp())}.wav"
+    file_path = os.path.join(UPLOAD_DIR, file_name)
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-    label, confidence = predict_audio(file_path)
+        label, confidence = predict_audio(file_path)
 
-    record = Prediction(
-        user_id=user_id,
-        filename=file.filename,
-        prediction=label,
-        confidence=float(confidence),
-        created_at=datetime.now()
-    )
+        # Geçersiz user_id geldiğinde tahmini yine döndür, kaydı users ilişkisi olmadan tut.
+        resolved_user_id = user_id
+        if user_id is not None:
+            exists = db.query(User.id).filter(User.id == user_id).first()
+            if exists is None:
+                resolved_user_id = None
 
-    db.add(record)
-    db.commit()
+        record = Prediction(
+            user_id=resolved_user_id,
+            filename=file_name,
+            prediction=label,
+            confidence=float(confidence),
+            created_at=datetime.now()
+        )
 
-    return {
-        "prediction": label,
-        "confidence": round(float(confidence), 4)
-    }
+        db.add(record)
+        db.commit()
+
+        return {
+            "prediction": label,
+            "confidence": round(float(confidence), 4)
+        }
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(exc)}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {str(exc)}")
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 # -------------------------------------------------
 # CHAT MODEL
