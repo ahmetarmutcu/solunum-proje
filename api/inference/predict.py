@@ -44,7 +44,7 @@ def _normalize_keras_config(node):
 
 def _load_h5_with_inputlayer_patch(model_path: str):
     """Fallback loader for H5 models saved with newer Keras config keys."""
-    from tensorflow import keras
+    import keras
     import h5py
 
     with h5py.File(model_path, "r") as h5:
@@ -66,12 +66,17 @@ def _load_h5_with_inputlayer_patch(model_path: str):
 def _load_model():
     global model, label_encoder
     if model is None:
-        from tensorflow import keras
         try:
-            model = keras.models.load_model(MODEL_PATH, compile=False)
+            # Prefer Keras 3 loader for models saved with newer Keras config format.
+            import keras
+            model = keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
         except Exception:
-            # Compatibility path for models saved with different Keras config keys.
-            model = _load_h5_with_inputlayer_patch(MODEL_PATH)
+            try:
+                from tensorflow import keras as tf_keras
+                model = tf_keras.models.load_model(MODEL_PATH, compile=False)
+            except Exception:
+                # Compatibility path for models saved with different Keras config keys.
+                model = _load_h5_with_inputlayer_patch(MODEL_PATH)
         with open(ENCODER_PATH, "rb") as f:
             label_encoder = pickle.load(f)
 
