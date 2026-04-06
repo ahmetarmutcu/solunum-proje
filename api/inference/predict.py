@@ -21,8 +21,8 @@ label_encoder = None
 def _load_model():
     global model, label_encoder
     if model is None:
-        import tensorflow as tf
-        model = tf.keras.models.load_model(MODEL_PATH)
+        import keras
+        model = keras.models.load_model(MODEL_PATH)
         with open(ENCODER_PATH, "rb") as f:
             label_encoder = pickle.load(f)
 
