@@ -6,7 +6,7 @@ sqlalchemy
 passlib[bcrypt]
 bcrypt==3.2.2
 python-jose
-numpy
+numpy==1.26.4
 librosa
 scikit-learn
 tensorflow-cpu==2.15.1
