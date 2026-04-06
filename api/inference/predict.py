@@ -20,8 +20,30 @@ model = None
 label_encoder = None
 
 
+def _normalize_keras_config(node):
+    if isinstance(node, dict):
+        class_name = node.get("class_name")
+        cfg = node.get("config")
+
+        if class_name == "InputLayer" and isinstance(cfg, dict):
+            if "batch_shape" in cfg and "batch_input_shape" not in cfg:
+                cfg["batch_input_shape"] = cfg.pop("batch_shape")
+
+        # Keras3 style dtype policy objects can break older tf.keras deserialization.
+        if isinstance(cfg, dict) and isinstance(cfg.get("dtype"), dict):
+            dtype_obj = cfg["dtype"]
+            if dtype_obj.get("class_name") == "DTypePolicy":
+                cfg["dtype"] = dtype_obj.get("config", {}).get("name", "float32")
+
+        for value in node.values():
+            _normalize_keras_config(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_keras_config(item)
+
+
 def _load_h5_with_inputlayer_patch(model_path: str):
-    """Fallback loader for H5 models that store InputLayer with `batch_shape`."""
+    """Fallback loader for H5 models saved with newer Keras config keys."""
     from tensorflow import keras
     import h5py
 
@@ -35,19 +57,7 @@ def _load_h5_with_inputlayer_patch(model_path: str):
 
         config_obj = json.loads(model_config)
 
-        def patch_input_layer(node):
-            if isinstance(node, dict):
-                if node.get("class_name") == "InputLayer":
-                    cfg = node.get("config", {})
-                    if "batch_shape" in cfg and "batch_input_shape" not in cfg:
-                        cfg["batch_input_shape"] = cfg.pop("batch_shape")
-                for value in node.values():
-                    patch_input_layer(value)
-            elif isinstance(node, list):
-                for item in node:
-                    patch_input_layer(item)
-
-        patch_input_layer(config_obj)
+        _normalize_keras_config(config_obj)
 
         loaded_model = keras.models.model_from_json(json.dumps(config_obj))
         loaded_model.load_weights(model_path)
