@@ -1,14 +1,10 @@
 import numpy as np
 import librosa
 import pickle
-import tensorflow as tf
 import os
 
 # -----------------------------
 # MODEL YOLLARI
-# -----------------------------
-# -----------------------------
-# MODEL YOLLARI (DÜZELTİLDİ)
 # -----------------------------
 PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
@@ -18,17 +14,17 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "best_model.h5")
 ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
 
+# Model ve encoder'ı lazy load et
+model = None
+label_encoder = None
 
-MODEL_PATH = os.path.join(MODELS_DIR, "best_model.h5")
-ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
-
-# -----------------------------
-# MODEL + ENCODER YÜKLE
-# -----------------------------
-model = tf.keras.models.load_model(MODEL_PATH)
-
-with open(ENCODER_PATH, "rb") as f:
-    label_encoder = pickle.load(f)
+def _load_model():
+    global model, label_encoder
+    if model is None:
+        import tensorflow as tf
+        model = tf.keras.models.load_model(MODEL_PATH)
+        with open(ENCODER_PATH, "rb") as f:
+            label_encoder = pickle.load(f)
 
 # -----------------------------
 # MFCC AYARLARI
@@ -51,6 +47,7 @@ def extract_mfcc(file_path: str):
     return mfcc
 
 def predict_audio(wav_path: str):
+    _load_model()
     mfcc = extract_mfcc(wav_path)
     mfcc = np.expand_dims(mfcc, axis=0)
 
