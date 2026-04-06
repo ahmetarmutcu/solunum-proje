@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
+sqlalchemy
+passlib[bcrypt]
+bcrypt==3.2.2
+python-jose
+numpy
+librosa
+scikit-learn
+tensorflow

@@ -1,0 +1,27 @@
+name: nefes_analiz_app
+description: "Yapay zeka destekli solunum analizi mobil uygulaması."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.7.0
+  record: ^5.2.0
+  path_provider: ^2.1.4
+  permission_handler: ^11.3.1
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
