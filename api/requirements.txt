@@ -9,4 +9,4 @@ python-jose
 numpy
 librosa
 scikit-learn
-keras
+tensorflow-cpu==2.15.1
