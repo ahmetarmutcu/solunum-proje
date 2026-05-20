@@ -1,8 +1,8 @@
+import json
 import numpy as np
 import librosa
-import pickle
 import os
-from tflite_runtime.interpreter import Interpreter
+import onnxruntime as ort
 
 # -----------------------------
 # MODEL YOLLARI
@@ -12,32 +12,44 @@ PROJECT_ROOT = os.path.abspath(
 )
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
-MODEL_PATH = os.path.join(MODELS_DIR, "best_model.tflite")
-ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
+MODEL_PATH = os.path.join(MODELS_DIR, "best_model.onnx")
+LABELS_PATH = os.path.join(MODELS_DIR, "label_classes.json")
 
-# Model ve encoder'ı lazy load et
-interpreter = None
-input_details = None
-output_details = None
-label_encoder = None
+# Model ve labels'ı lazy load et
+session = None
+input_name = None
+output_name = None
+label_classes: list[str] | None = None
 def _load_model():
-    global interpreter, input_details, output_details, label_encoder
-    if interpreter is None:
+    global session, input_name, output_name, label_classes
+    if session is None:
         if not os.path.exists(MODEL_PATH):
             raise FileNotFoundError(
-                f"TFLite model not found: {MODEL_PATH}. "
-                "Run tools/convert_to_tflite.py to generate best_model.tflite and commit it."
+                f"ONNX model not found: {MODEL_PATH}. "
+                "Run tools/convert_to_onnx.py to generate best_model.onnx and commit it."
             )
 
-        interpreter_local = Interpreter(model_path=MODEL_PATH)
-        interpreter_local.allocate_tensors()
+        if not os.path.exists(LABELS_PATH):
+            raise FileNotFoundError(
+                f"Label classes file not found: {LABELS_PATH}. "
+                "Run tools/export_label_classes.py to generate label_classes.json and commit it."
+            )
 
-        interpreter = interpreter_local
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
+        sess = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
+        session = sess
 
-        with open(ENCODER_PATH, "rb") as f:
-            label_encoder = pickle.load(f)
+        inputs = sess.get_inputs()
+        outputs = sess.get_outputs()
+        if len(inputs) != 1 or len(outputs) != 1:
+            raise ValueError(
+                f"Expected 1 input and 1 output, got {len(inputs)} inputs and {len(outputs)} outputs"
+            )
+
+        input_name = inputs[0].name
+        output_name = outputs[0].name
+
+        with open(LABELS_PATH, "r", encoding="utf-8") as f:
+            label_classes = json.load(f)
 
 # -----------------------------
 # MFCC AYARLARI
@@ -64,20 +76,14 @@ def predict_audio(wav_path: str):
     mfcc = extract_mfcc(wav_path)
     mfcc = np.expand_dims(mfcc, axis=0)
 
-    # Ensure dtype matches the model input.
-    input_index = int(input_details[0]["index"])
-    expected_dtype = input_details[0].get("dtype", np.float32)
-    input_tensor = mfcc.astype(expected_dtype, copy=False)
+    # ONNX Runtime expects float32 in most Keras-exported graphs.
+    input_tensor = mfcc.astype(np.float32, copy=False)
 
-    interpreter.set_tensor(input_index, input_tensor)
-    interpreter.invoke()
-
-    output_index = int(output_details[0]["index"])
-    probs = interpreter.get_tensor(output_index)
+    probs = session.run([output_name], {input_name: input_tensor})[0]
     class_id = int(np.argmax(probs, axis=-1).item())
     confidence = float(np.max(probs).item())
 
-    label = label_encoder.inverse_transform([class_id])[0]
+    label = label_classes[class_id]
     return label, confidence
 
 

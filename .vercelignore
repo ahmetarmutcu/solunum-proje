@@ -4,3 +4,6 @@ results/
 temp_audio/
 inference/
 database.db
+
+# Ignore old runtime artifacts
+models/best_model.tflite

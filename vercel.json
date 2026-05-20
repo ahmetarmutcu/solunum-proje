@@ -7,6 +7,11 @@
       "config": { "runtime": "python3.12" }
     }
   ],
+  "functions": {
+    "main.py": {
+      "excludeFiles": "{data/**,results/**,temp_audio/**,inference/**,database.db}"
+    }
+  },
   "routes": [
     {
       "src": "/(.*)",
