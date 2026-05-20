@@ -2,7 +2,6 @@
   "version": 2,
   "functions": {
     "main.py": {
-      "runtime": "python3.12",
       "excludeFiles": "{data/**,results/**,temp_audio/**,inference/**,database.db}"
     }
   },
