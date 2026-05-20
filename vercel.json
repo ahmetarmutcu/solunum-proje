@@ -1,14 +1,8 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "main.py",
-      "use": "@vercel/python",
-      "config": { "runtime": "python3.12" }
-    }
-  ],
   "functions": {
     "main.py": {
+      "runtime": "python3.12",
       "excludeFiles": "{data/**,results/**,temp_audio/**,inference/**,database.db}"
     }
   },
