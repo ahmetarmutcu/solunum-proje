@@ -1,8 +1,8 @@
-import json
 import numpy as np
 import librosa
+import pickle
 import os
-import onnxruntime as ort
+import json
 
 # -----------------------------
 # MODEL YOLLARI
@@ -12,44 +12,73 @@ PROJECT_ROOT = os.path.abspath(
 )
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
-MODEL_PATH = os.path.join(MODELS_DIR, "best_model.onnx")
-LABELS_PATH = os.path.join(MODELS_DIR, "label_classes.json")
+MODEL_PATH = os.path.join(MODELS_DIR, "best_model.h5")
+ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
 
-# Model ve labels'ı lazy load et
-session = None
-input_name = None
-output_name = None
-label_classes: list[str] | None = None
+# Model ve encoder'ı lazy load et
+model = None
+label_encoder = None
+
+
+def _normalize_keras_config(node):
+    if isinstance(node, dict):
+        class_name = node.get("class_name")
+        cfg = node.get("config")
+
+        if class_name == "InputLayer" and isinstance(cfg, dict):
+            if "batch_shape" in cfg and "batch_input_shape" not in cfg:
+                cfg["batch_input_shape"] = cfg.pop("batch_shape")
+
+        # Keras3 style dtype policy objects can break older tf.keras deserialization.
+        if isinstance(cfg, dict) and isinstance(cfg.get("dtype"), dict):
+            dtype_obj = cfg["dtype"]
+            if dtype_obj.get("class_name") == "DTypePolicy":
+                cfg["dtype"] = dtype_obj.get("config", {}).get("name", "float32")
+
+        for value in node.values():
+            _normalize_keras_config(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_keras_config(item)
+
+
+def _load_h5_with_inputlayer_patch(model_path: str):
+    """Fallback loader for H5 models saved with newer Keras config keys."""
+    import keras
+    import h5py
+
+    with h5py.File(model_path, "r") as h5:
+        model_config = h5.attrs.get("model_config")
+        if model_config is None:
+            raise ValueError("H5 model_config missing")
+
+        if isinstance(model_config, bytes):
+            model_config = model_config.decode("utf-8")
+
+        config_obj = json.loads(model_config)
+
+        _normalize_keras_config(config_obj)
+
+        loaded_model = keras.models.model_from_json(json.dumps(config_obj))
+        loaded_model.load_weights(model_path)
+        return loaded_model
+
 def _load_model():
-    global session, input_name, output_name, label_classes
-    if session is None:
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(
-                f"ONNX model not found: {MODEL_PATH}. "
-                "Run tools/convert_to_onnx.py to generate best_model.onnx and commit it."
-            )
-
-        if not os.path.exists(LABELS_PATH):
-            raise FileNotFoundError(
-                f"Label classes file not found: {LABELS_PATH}. "
-                "Run tools/export_label_classes.py to generate label_classes.json and commit it."
-            )
-
-        sess = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
-        session = sess
-
-        inputs = sess.get_inputs()
-        outputs = sess.get_outputs()
-        if len(inputs) != 1 or len(outputs) != 1:
-            raise ValueError(
-                f"Expected 1 input and 1 output, got {len(inputs)} inputs and {len(outputs)} outputs"
-            )
-
-        input_name = inputs[0].name
-        output_name = outputs[0].name
-
-        with open(LABELS_PATH, "r", encoding="utf-8") as f:
-            label_classes = json.load(f)
+    global model, label_encoder
+    if model is None:
+        try:
+            # Prefer Keras 3 loader for models saved with newer Keras config format.
+            import keras
+            model = keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
+        except Exception:
+            try:
+                from tensorflow import keras as tf_keras
+                model = tf_keras.models.load_model(MODEL_PATH, compile=False)
+            except Exception:
+                # Compatibility path for models saved with different Keras config keys.
+                model = _load_h5_with_inputlayer_patch(MODEL_PATH)
+        with open(ENCODER_PATH, "rb") as f:
+            label_encoder = pickle.load(f)
 
 # -----------------------------
 # MFCC AYARLARI
@@ -76,14 +105,10 @@ def predict_audio(wav_path: str):
     mfcc = extract_mfcc(wav_path)
     mfcc = np.expand_dims(mfcc, axis=0)
 
-    # ONNX Runtime expects float32 in most Keras-exported graphs.
-    input_tensor = mfcc.astype(np.float32, copy=False)
+    probs = model.predict(mfcc, verbose=0)
+    class_id = int(np.argmax(probs))
+    confidence = float(np.max(probs))
 
-    probs = session.run([output_name], {input_name: input_tensor})[0]
-    class_id = int(np.argmax(probs, axis=-1).item())
-    confidence = float(np.max(probs).item())
-
-    label = label_classes[class_id]
+    label = label_encoder.inverse_transform([class_id])[0]
     return label, confidence
-
 
