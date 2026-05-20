@@ -2,7 +2,7 @@ import numpy as np
 import librosa
 import pickle
 import os
-import json
+from tflite_runtime.interpreter import Interpreter
 
 # -----------------------------
 # MODEL YOLLARI
@@ -12,71 +12,30 @@ PROJECT_ROOT = os.path.abspath(
 )
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
-MODEL_PATH = os.path.join(MODELS_DIR, "best_model.h5")
+MODEL_PATH = os.path.join(MODELS_DIR, "best_model.tflite")
 ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
 
 # Model ve encoder'ı lazy load et
-model = None
+interpreter = None
+input_details = None
+output_details = None
 label_encoder = None
-
-
-def _normalize_keras_config(node):
-    if isinstance(node, dict):
-        class_name = node.get("class_name")
-        cfg = node.get("config")
-
-        if class_name == "InputLayer" and isinstance(cfg, dict):
-            if "batch_shape" in cfg and "batch_input_shape" not in cfg:
-                cfg["batch_input_shape"] = cfg.pop("batch_shape")
-
-        # Keras3 style dtype policy objects can break older tf.keras deserialization.
-        if isinstance(cfg, dict) and isinstance(cfg.get("dtype"), dict):
-            dtype_obj = cfg["dtype"]
-            if dtype_obj.get("class_name") == "DTypePolicy":
-                cfg["dtype"] = dtype_obj.get("config", {}).get("name", "float32")
-
-        for value in node.values():
-            _normalize_keras_config(value)
-    elif isinstance(node, list):
-        for item in node:
-            _normalize_keras_config(item)
-
-
-def _load_h5_with_inputlayer_patch(model_path: str):
-    """Fallback loader for H5 models saved with newer Keras config keys."""
-    import keras
-    import h5py
-
-    with h5py.File(model_path, "r") as h5:
-        model_config = h5.attrs.get("model_config")
-        if model_config is None:
-            raise ValueError("H5 model_config missing")
-
-        if isinstance(model_config, bytes):
-            model_config = model_config.decode("utf-8")
-
-        config_obj = json.loads(model_config)
-
-        _normalize_keras_config(config_obj)
-
-        loaded_model = keras.models.model_from_json(json.dumps(config_obj))
-        loaded_model.load_weights(model_path)
-        return loaded_model
-
 def _load_model():
-    global model, label_encoder
-    if model is None:
-        try:
-            # Prefer Keras 3 loader for models saved with newer Keras config format.
-            import keras
-            model = keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
-        except Exception:
-            try:
-                from tensorflow import keras as tf_keras
-                model = tf_keras.models.load_model(MODEL_PATH, compile=False)
-            except Exception:
-                # Compatibility path for models saved with different Keras config keys.
-                model = _load_h5_with_inputlayer_patch(MODEL_PATH)
+    global interpreter, input_details, output_details, label_encoder
+    if interpreter is None:
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(
+                f"TFLite model not found: {MODEL_PATH}. "
+                "Run tools/convert_to_tflite.py to generate best_model.tflite and commit it."
+            )
+
+        interpreter_local = Interpreter(model_path=MODEL_PATH)
+        interpreter_local.allocate_tensors()
+
+        interpreter = interpreter_local
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
         with open(ENCODER_PATH, "rb") as f:
             label_encoder = pickle.load(f)
 
@@ -105,10 +64,20 @@ def predict_audio(wav_path: str):
     mfcc = extract_mfcc(wav_path)
     mfcc = np.expand_dims(mfcc, axis=0)
 
-    probs = model.predict(mfcc, verbose=0)
-    class_id = int(np.argmax(probs))
-    confidence = float(np.max(probs))
+    # Ensure dtype matches the model input.
+    input_index = int(input_details[0]["index"])
+    expected_dtype = input_details[0].get("dtype", np.float32)
+    input_tensor = mfcc.astype(expected_dtype, copy=False)
+
+    interpreter.set_tensor(input_index, input_tensor)
+    interpreter.invoke()
+
+    output_index = int(output_details[0]["index"])
+    probs = interpreter.get_tensor(output_index)
+    class_id = int(np.argmax(probs, axis=-1).item())
+    confidence = float(np.max(probs).item())
 
     label = label_encoder.inverse_transform([class_id])[0]
     return label, confidence
+
 

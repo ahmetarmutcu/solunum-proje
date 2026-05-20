@@ -1,0 +1,6 @@
+# Reduce upload size; these are not needed at runtime on Vercel
+data/
+results/
+temp_audio/
+inference/
+database.db
