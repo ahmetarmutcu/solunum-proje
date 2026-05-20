@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
+sqlalchemy
+passlib[bcrypt]
+bcrypt==3.2.2
+python-jose
+numpy==1.26.4
+librosa
+scikit-learn
+tensorflow-cpu==2.16.1
+keras==3.3.3
