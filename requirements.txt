@@ -9,5 +9,5 @@ python-jose
 numpy==1.26.4
 librosa
 scikit-learn
-tflite-runtime
+tflite-runtime==2.14.0
 
